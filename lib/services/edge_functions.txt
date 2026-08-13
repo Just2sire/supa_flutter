@@ -1,0 +1,64 @@
+Edge Functions (Logique Serveur Sécurisée)
+Vous ne devriez jamais écrire de code métier secret directement dans Flutter (ex: appeler l'API de Stripe pour un paiement, envoyer un email). Ce code doit vivre sur votre serveur pour être sécurisé. Supabase propose les Edge Functions pour héberger ces scripts.
+
+1. Créer une Edge Function (TypeScript + Deno)
+Les Edge Functions sont des fonctions TypeScript qui tournent sur Deno (runtime ultra-rapide). Créez-les avec la CLI Supabase :
+
+
+# Installer la CLI Supabase
+npm install -g supabase
+
+# Créer une nouvelle fonction
+supabase functions new process-payment
+
+# Déployer sur Supabase
+supabase functions deploy process-payment
+  
+2. Exemple de fonction (TypeScript)
+
+// supabase/functions/process-payment/index.ts
+import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
+import Stripe from 'https://esm.sh/stripe@12.0.0'
+
+serve(async (req) => {
+  const { amount, currency } = await req.json()
+
+  // Clé secrète Stripe (stockée dans les secrets Supabase)
+  const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY')!, {
+    apiVersion: '2023-10-16',
+  })
+
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount,
+    currency,
+  })
+
+  return new Response(
+    JSON.stringify({ clientSecret: paymentIntent.client_secret }),
+    { headers: { 'Content-Type': 'application/json' } }
+  )
+})
+  
+3. Invoquer une Edge Function depuis Flutter
+
+final supabase = Supabase.instance.client;
+
+Future<String?> processPayment(int amount, String currency) async {
+  try {
+    final FunctionResponse response = await supabase.functions.invoke(
+      'process-payment',         // Nom de la fonction déployée
+      body: {
+        'amount': amount,        // En centimes (ex: 1500 = 15.00 EUR)
+        'currency': currency,
+      },
+    );
+
+    return response.data['clientSecret'] as String?;
+
+  } on FunctionException catch (e) {
+    print('Erreur Edge Function: ${e.details}');
+    return null;
+  }
+}
+  
+💡 Bon à savoir : Stockez vos clés API secrètes (Stripe, Twilio, SendGrid…) dans les Secrets de la console Supabase (Settings > Edge Functions > Secrets), jamais dans votre code. Elles sont disponibles via Deno.env.get('MA_CLE') dans vos fonctions.

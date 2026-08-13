@@ -1,0 +1,72 @@
+Temps réel avec Supabase (Realtime)
+Bien que PostgreSQL ne soit pas conçu nativement pour le temps réel, Supabase intègre un serveur Elixir (Phoenix Channels) qui "écoute" les changements de la base de données via des WebSockets. Vous obtenez ainsi un comportement très similaire aux snapshots() de Firebase Firestore.
+
+1. La méthode .stream() (la plus simple)
+
+final supabase = Supabase.instance.client;
+
+// Dans votre widget :
+StreamBuilder<List<Map<String, dynamic>>>(
+  // Écoute la table 'messages', triée par date de création
+  stream: supabase
+      .from('messages')
+      .stream(primaryKey: ['id'])
+      .eq('room_id', 'general')
+      .order('created_at', ascending: true)
+      .limit(100),
+  builder: (context, snapshot) {
+    if (!snapshot.hasData) return const CircularProgressIndicator();
+
+    final messages = snapshot.data!;
+    return ListView.builder(
+      itemCount: messages.length,
+      itemBuilder: (context, index) {
+        final msg = messages[index];
+        return ListTile(
+          title: Text(msg['content'] as String),
+          subtitle: Text(msg['user_id'] as String),
+        );
+      },
+    );
+  },
+)
+  
+2. Channels — contrôle granulaire
+
+// Pour des cas avancés : s'abonner à des changements spécifiques
+final channel = supabase.channel('room-general');
+
+channel
+  .onPostgresChanges(
+    event: PostgresChangeEvent.insert,
+    schema: 'public',
+    table: 'messages',
+    filter: PostgresChangeFilter(
+      type: PostgresChangeFilterType.eq,
+      column: 'room_id',
+      value: 'general',
+    ),
+    callback: (payload) {
+      final newMessage = payload.newRecord;
+      print('Nouveau message: ${newMessage['content']}');
+      // Mettre à jour l'état local
+    },
+  )
+  .subscribe();
+
+// Dans dispose() :
+await channel.unsubscribe();
+  
+3. Broadcast et Presence (collaboration temps réel)
+
+// Broadcast : envoyer un message à tous les abonnés du channel (sans passer par la DB)
+await channel.sendBroadcastMessage(
+  event: 'typing',
+  payload: {'user': supabase.auth.currentUser?.email},
+);
+
+// Presence : savoir qui est en ligne dans un channel
+await channel.track({'online_at': DateTime.now().toIso8601String()});
+final presenceState = channel.presenceState();
+  
+💡 Bon à savoir : Pour que .stream() fonctionne, activez la réplication pour vos tables dans le dashboard Supabase : Database > Replication > Source > Activez la table. Sans cette étape, les événements temps réel ne seront pas émis.
